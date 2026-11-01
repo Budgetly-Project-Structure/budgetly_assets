@@ -1,0 +1,581 @@
+{
+  "info": {
+    "name": "Budgetly impersonation demo (SCRUM-115)",
+    "description": "Proves one user can't read or change another user's transactions, even when calling the Firestore REST API directly with a valid login. See docs/postman-impersonation-demo.md. No tokens or passwords are stored in this file: they live in a Postman environment you create yourself.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "firestoreBase",
+      "value": "https://firestore.googleapis.com/v1"
+    },
+    {
+      "key": "authBase",
+      "value": "https://identitytoolkit.googleapis.com/v1"
+    },
+    {
+      "key": "functionsBase",
+      "value": "https://us-central1-{{projectId}}.cloudfunctions.net"
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Setup",
+      "item": [
+        {
+          "name": "Sign in as user A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns 200\", () => {",
+                  "  if (pm.response.code !== 200) throw new Error(\"expected 200, got \" + pm.response.code + \": \" + pm.response.text());",
+                  "});",
+                  "const r = pm.response.json();",
+                  "pm.environment.set(\"tokenA\", r.idToken);",
+                  "pm.environment.set(\"uidA\", r.localId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{authBase}}/accounts:signInWithPassword?key={{apiKey}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{emailA}}\",\n  \"password\": \"{{passwordA}}\",\n  \"returnSecureToken\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Signs in test account A and keeps its ID token and uid in your environment for this run (tokenA, uidA)."
+          }
+        },
+        {
+          "name": "Sign in as user B",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns 200\", () => {",
+                  "  if (pm.response.code !== 200) throw new Error(\"expected 200, got \" + pm.response.code + \": \" + pm.response.text());",
+                  "});",
+                  "const r = pm.response.json();",
+                  "pm.environment.set(\"tokenB\", r.idToken);",
+                  "pm.environment.set(\"uidB\", r.localId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{authBase}}/accounts:signInWithPassword?key={{apiKey}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{emailB}}\",\n  \"password\": \"{{passwordB}}\",\n  \"returnSecureToken\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Signs in test account B and keeps its ID token and uid in your environment for this run (tokenB, uidB)."
+          }
+        },
+        {
+          "name": "B creates one of B's own transactions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns 200\", () => {",
+                  "  if (pm.response.code !== 200) throw new Error(\"expected 200, got \" + pm.response.code + \": \" + pm.response.text());",
+                  "});",
+                  "pm.environment.set(\"txnB\", pm.response.json().name.split(\"/\").pop());"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenB}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{firestoreBase}}/projects/{{projectId}}/databases/(default)/documents/transactions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"userId\": {\n      \"stringValue\": \"{{uidB}}\"\n    },\n    \"date\": {\n      \"timestampValue\": \"2026-10-15T12:00:00Z\"\n    },\n    \"merchant\": {\n      \"stringValue\": \"Postman demo (B)\"\n    },\n    \"amount\": {\n      \"doubleValue\": -12.5\n    },\n    \"category\": {\n      \"stringValue\": \"dining\"\n    },\n    \"categorySource\": {\n      \"stringValue\": \"user\"\n    },\n    \"source\": {\n      \"stringValue\": \"manual\"\n    },\n    \"deletedAt\": {\n      \"nullValue\": null\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Gives B a transaction for A to try to read and change. Allowed: B is writing B's own data."
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. A attacks B (all must be 403)",
+      "item": [
+        {
+          "name": "A lists B's transactions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns 403\", () => {",
+                  "  if (pm.response.code !== 403) throw new Error(\"expected 403, got \" + pm.response.code + \": \" + pm.response.text());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenA}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{firestoreBase}}/projects/{{projectId}}/databases/(default)/documents:runQuery",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [\n      {\n        \"collectionId\": \"transactions\"\n      }\n    ],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": {\n          \"fieldPath\": \"userId\"\n        },\n        \"op\": \"EQUAL\",\n        \"value\": {\n          \"stringValue\": \"{{uidB}}\"\n        }\n      }\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A asks for every transaction whose userId is B. The rules compare each doc's userId with A's uid from the token, so the whole query is refused."
+          }
+        },
+        {
+          "name": "A reads B's transaction directly",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns 403\", () => {",
+                  "  if (pm.response.code !== 403) throw new Error(\"expected 403, got \" + pm.response.code + \": \" + pm.response.text());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenA}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{firestoreBase}}/projects/{{projectId}}/databases/(default)/documents/transactions/{{txnB}}",
+            "description": "Even knowing the exact document ID doesn't help."
+          }
+        },
+        {
+          "name": "A creates a transaction with userId = B",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns 403\", () => {",
+                  "  if (pm.response.code !== 403) throw new Error(\"expected 403, got \" + pm.response.code + \": \" + pm.response.text());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenA}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{firestoreBase}}/projects/{{projectId}}/databases/(default)/documents/transactions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"userId\": {\n      \"stringValue\": \"{{uidB}}\"\n    },\n    \"date\": {\n      \"timestampValue\": \"2026-10-15T12:00:00Z\"\n    },\n    \"merchant\": {\n      \"stringValue\": \"Postman demo (fake B)\"\n    },\n    \"amount\": {\n      \"doubleValue\": -12.5\n    },\n    \"category\": {\n      \"stringValue\": \"dining\"\n    },\n    \"categorySource\": {\n      \"stringValue\": \"user\"\n    },\n    \"source\": {\n      \"stringValue\": \"manual\"\n    },\n    \"deletedAt\": {\n      \"nullValue\": null\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Impersonation: A writes B's uid into the body. The rules require userId == request.auth.uid, so it's refused."
+          }
+        },
+        {
+          "name": "A changes B's transaction",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns 403\", () => {",
+                  "  if (pm.response.code !== 403) throw new Error(\"expected 403, got \" + pm.response.code + \": \" + pm.response.text());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenA}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{firestoreBase}}/projects/{{projectId}}/databases/(default)/documents/transactions/{{txnB}}?updateMask.fieldPaths=category",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"category\": {\n      \"stringValue\": \"hacked\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A tries to re-categorize B's transaction."
+          }
+        },
+        {
+          "name": "A deletes B's transaction",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns 403\", () => {",
+                  "  if (pm.response.code !== 403) throw new Error(\"expected 403, got \" + pm.response.code + \": \" + pm.response.text());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenA}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{firestoreBase}}/projects/{{projectId}}/databases/(default)/documents/transactions/{{txnB}}",
+            "description": "Deletes from the app are never allowed (soft delete only), let alone someone else's."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. A uses A's own data (all must be 200)",
+      "item": [
+        {
+          "name": "A lists A's own transactions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns 200\", () => {",
+                  "  if (pm.response.code !== 200) throw new Error(\"expected 200, got \" + pm.response.code + \": \" + pm.response.text());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenA}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{firestoreBase}}/projects/{{projectId}}/databases/(default)/documents:runQuery",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [\n      {\n        \"collectionId\": \"transactions\"\n      }\n    ],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": {\n          \"fieldPath\": \"userId\"\n        },\n        \"op\": \"EQUAL\",\n        \"value\": {\n          \"stringValue\": \"{{uidA}}\"\n        }\n      }\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "A creates one of A's own transactions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns 200\", () => {",
+                  "  if (pm.response.code !== 200) throw new Error(\"expected 200, got \" + pm.response.code + \": \" + pm.response.text());",
+                  "});",
+                  "pm.environment.set(\"txnA\", pm.response.json().name.split(\"/\").pop());"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenA}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{firestoreBase}}/projects/{{projectId}}/databases/(default)/documents/transactions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"userId\": {\n      \"stringValue\": \"{{uidA}}\"\n    },\n    \"date\": {\n      \"timestampValue\": \"2026-10-15T12:00:00Z\"\n    },\n    \"merchant\": {\n      \"stringValue\": \"Postman demo (A)\"\n    },\n    \"amount\": {\n      \"doubleValue\": -12.5\n    },\n    \"category\": {\n      \"stringValue\": \"dining\"\n    },\n    \"categorySource\": {\n      \"stringValue\": \"user\"\n    },\n    \"source\": {\n      \"stringValue\": \"manual\"\n    },\n    \"deletedAt\": {\n      \"nullValue\": null\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "A re-categorizes A's own transaction",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns 200\", () => {",
+                  "  if (pm.response.code !== 200) throw new Error(\"expected 200, got \" + pm.response.code + \": \" + pm.response.text());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenA}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{firestoreBase}}/projects/{{projectId}}/databases/(default)/documents/transactions/{{txnA}}?updateMask.fieldPaths=category",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"category\": {\n      \"stringValue\": \"groceries\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. No login at all (must be 403)",
+      "item": [
+        {
+          "name": "Anonymous lists B's transactions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"returns 403\", () => {",
+                  "  if (pm.response.code !== 403) throw new Error(\"expected 403, got \" + pm.response.code + \": \" + pm.response.text());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{firestoreBase}}/projects/{{projectId}}/databases/(default)/documents:runQuery",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [\n      {\n        \"collectionId\": \"transactions\"\n      }\n    ],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": {\n          \"fieldPath\": \"userId\"\n        },\n        \"op\": \"EQUAL\",\n        \"value\": {\n          \"stringValue\": \"{{uidB}}\"\n        }\n      }\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "No Authorization header: request.auth is null, so everything is denied."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Cloud Functions ignore a spoofed userId (live project only)",
+      "item": [
+        {
+          "name": "deleteImport with no login and userId = B",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"refused as UNAUTHENTICATED\", () => {",
+                  "  const s = (pm.response.json().error || {}).status;",
+                  "  if (s !== \"UNAUTHENTICATED\") throw new Error(\"expected UNAUTHENTICATED, got \" + pm.response.text());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{functionsBase}}/deleteImport",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"data\": {\n    \"importId\": \"postman-demo-not-real\",\n    \"userId\": \"{{uidB}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "The body says userId = B, but the function only trusts the login token (SCRUM-112). With no token it refuses. The import ID is fake on purpose, so nothing can be deleted."
+          }
+        },
+        {
+          "name": "deleteImport as A with userId = B",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"looks only in A's own statements (NOT_FOUND)\", () => {",
+                  "  const s = (pm.response.json().error || {}).status;",
+                  "  if (s !== \"NOT_FOUND\") throw new Error(\"expected NOT_FOUND, got \" + pm.response.text());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenA}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{functionsBase}}/deleteImport",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"data\": {\n    \"importId\": \"postman-demo-not-real\",\n    \"userId\": \"{{uidB}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Signed in as A with B's uid in the body: the function uses A's uid from the token and looks only in A's own statements, so the (fake) import is simply not found."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -60,10 +60,10 @@ For `transactions/{transactionId}`:
 * Delete from the client: never allowed (deleting is a soft delete, see below).
 * A list query without `where("userId", "==", <own uid>)` is rejected. Rules aren't filters: Firestore won't quietly drop other users' documents, it refuses the whole query.
 
-### Proof (upcoming)
+### Proof
 
 * Rules tests: SCRUM-114, `test/firestore.rules.test.js` in budgetly_backend_nodejs.
-* Postman demo: SCRUM-115, showing a request with another user's `userId` is rejected.
+* Postman demo: SCRUM-115, [postman-impersonation-demo.md](postman-impersonation-demo.md). Signed in as user A, every attempt to read, create, change or delete user B's transactions returns 403.
 
 A new account has a new uid, so its files appear in a new folder in the Storage console. To find an account's data, look up its UID under Authentication, then open `users/{UID}` in Storage and Firestore.
 
