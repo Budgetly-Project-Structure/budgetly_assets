@@ -174,7 +174,77 @@ stateDiagram-v2
 
 * Unit tests (functions/test): soft delete, restore, purge only after `purgeAfter`, purge removes the file, ownership and "still importing" checks still enforced.
 * Rules tests (test/firestore.rules.test.js): client can't hard-delete transactions or budgets, can only set or clear the delete fields, can read but not write `auditLog`.
-* Emulator walkthrough: upload, delete, see it in Recently deleted, restore, delete again, run the purge with a past `purgeAfter`, confirm the file is gone from Storage.
+* Emulator walkthrough: upload, delete, see it in Recently deleted, restore, delete again, run the purge with a past `purgeAfter`, confirm the file is gone from Storage. Done in SCRUM-128 (below).
+
+## Delete lifecycle walkthrough (SCRUM-128)
+
+A repeatable script runs the whole life of an imported statement on the local emulators (Auth, Firestore, Storage and Functions, project `demo-budgetly`), through the real Cloud Functions, and prints PASS/FAIL for each step. It never touches the real project.
+
+```
+cd budgetly_backend_nodejs/functions
+npm run walkthrough
+```
+
+Script: `functions/scripts/walkthroughDeleteLifecycle.js` in budgetly_backend_nodejs. The test statement is `functions/test/fixtures/walkthrough-statement.csv` (6 rows).
+
+| Step | What the script does | What it checks |
+| --- | --- | --- |
+| 1. Upload | Alice's CSV is uploaded to `users/{uid}/imports/`, so `onStatementUploaded` runs | Import finishes; 6 transactions in top-level `transactions/`, each with `userId` = Alice and `deletedAt: null` |
+| 2. Delete | Calls `softDeleteImport` as Alice | Import and all 6 transactions get `deletedAt`, `deletedBy` = Alice, and `purgeAfter` 30 days later; nothing is removed; the file stays in Storage; `auditLog` has `import.deleted` |
+| 3. Recently deleted | Reads Alice's imports and active transactions | The statement is listed as deleted; no active transactions are left, so it's gone from lists and totals |
+| 4. Restore | Calls `restoreImport` as Alice | Delete fields cleared on the import and all 6 transactions; `auditLog` has `import.restored` |
+| 5. Another user | Bob calls `softDeleteImport` and `restoreImport` on Alice's statement, with `userId` = Alice in the body; then a call with no login | `NOT_FOUND`, `NOT_FOUND`, `UNAUTHENTICATED`; Alice's data unchanged; no audit entries for Bob |
+| 6. Purge | Alice deletes it again; 31 days later a restore is attempted and the daily purge logic (`runPurge` from `purgeDeleted`) runs | Restore is refused after 30 days; the purge removes all 6 transactions |
+
+Result (Nov 2, 2026): **all 24 checks passed.**
+
+```
+1. Alice uploads a statement; onStatementUploaded imports it
+  PASS  import finished  (status=completed)
+  PASS  6 transactions saved in the top-level transactions/ collection  (found 6)
+  PASS  each one has userId = alice and deletedAt = null
+2. Alice deletes it (softDeleteImport)
+  PASS  softDeleteImport succeeded  ({"deletedTransactions":6,...})
+  PASS  import marked deleted (deletedAt, deletedBy = alice, purgeAfter)
+  PASS  purgeAfter is 30 days after deletedAt  (30 days)
+  PASS  all its transactions marked deleted  (6/6)
+  PASS  nothing actually removed yet
+  PASS  the statement file is still in Storage
+  PASS  audit log has import.deleted  (import.deleted(6))
+3. It shows in Recently deleted
+  PASS  listed among alice's deleted statements
+  PASS  hidden from the transactions list and totals (no active transactions left)  (0 active)
+4. Alice restores it (restoreImport)
+  PASS  restoreImport succeeded  ({"restoredTransactions":6})
+  PASS  import's delete fields cleared
+  PASS  all transactions active again  (6/6)
+  PASS  audit log has import.restored  (import.deleted(6), import.restored(6))
+5. Bob can't touch it
+  PASS  Bob deleting alice's statement (with userId = alice in the body) -> NOT_FOUND  (NOT_FOUND)
+  PASS  Bob restoring it -> NOT_FOUND  (NOT_FOUND)
+  PASS  no login -> UNAUTHENTICATED  (UNAUTHENTICATED)
+  PASS  nothing in the audit log for bob
+  PASS  alice's statement is still deleted (Bob changed nothing)
+6. 30 days pass; the daily purge runs (purgeDeleted's runPurge, called directly)
+  PASS  restoring after 30 days is refused  (It's been more than 30 days, so this statement can't be restored.)
+  PASS  purge removed the 6 transactions  ({"transactions":6,"budgets":0,"skipped":0})
+  PASS  no transactions from that statement are left  (0 left)
+
+  Known gaps after the purge (SCRUM-122, not built yet):
+    import record still there:     yes
+    statement file still in Storage: yes
+    audit entry for the purge:     no  (log: import.deleted(6), import.restored(6), import.deleted(6))
+```
+
+### Gaps found
+
+The daily purge (SCRUM-127) removes soft-deleted **transactions** (and budgets), but for a deleted **statement** it does not yet:
+
+* remove the import record (`users/{uid}/imports/{importId}`), which stays marked deleted;
+* remove the raw file from Storage;
+* write an `import.purged` audit entry.
+
+So after 30 days the statement's transactions are gone for good, but its record and file are kept. That is SCRUM-122 ("purge of soft-deleted data after 30 days"), which would extend `runPurge` to statements: delete the file, then the import record, and write the audit entry with actor `"system"`.
 
 ## Open Questions
 
