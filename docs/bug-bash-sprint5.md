@@ -63,7 +63,7 @@ Use every file in `test-data/` and the backend fixtures, one at a time.
 | # | Steps | Expected | Result |
 | --- | --- | --- | --- |
 | 4.1 | Change a category on an uncategorized transaction | Saved; "Needs review" count goes down | Pass. Needs review went from 11 to 10. |
-| 4.2 | First visit of the month after an import | Auto budget banner appears once, not again on reload | Not fully tested. Auto budget was offered on the empty Budget page; the once-per-month banner was not checked. |
+| 4.2 | First visit of the month after an import | Auto budget banner appears once, not again on reload | Not conclusive. The Auto budget preview works and is not saved until Apply (a reload drops it). The once-per-month banner was not observed; limits were already present after the import and the cause is not confirmed. |
 | 4.3 | Auto budget preview and Apply | Budgets created in cents, amounts add up | Pass. Preview total $6,818 and $3,818 with $3,000 savings both add up; Apply saved the same totals. |
 | 4.4 | Delete a transaction, Undo; delete again, restore from Recently deleted | Works both ways | Pass. Undo and restore from Recently deleted both work. |
 | 4.5 | Remove a budget, restore it | Works | Pass. Removed the $15 Subscriptions budget and restored it at $15. |
@@ -76,7 +76,7 @@ Use every file in `test-data/` and the backend fixtures, one at a time.
 | 5.2 | Browser console during every step above | No red errors, no `permission-denied` | Pass. No `permission-denied`. Only network errors (QUIC / Listen stream) after the tab sat idle. |
 | 5.3 | Postman: write a transaction with old `amount` and no `amountCents` | Rejected by the rules | Pass by automated test (rules test: old dollar `amount` rejected). Postman not run. |
 | 5.4 | Search the Firestore emulator for full account numbers (9+ digits) in merchant names | None found | Pass by automated test (masking unit tests). Emulator search not run. |
-| 5.5 | Settings: delete my data / export, if present | Works, nothing left behind | Not run. |
+| 5.5 | Settings: delete my data / export, if present | Works, nothing left behind | **Fail (Medium).** "Delete my data" then "Yes, delete everything" does nothing; transactions and budgets stay. The code has a TODO for a `deleteUserData` Cloud Function. See Medium issue M1. |
 
 ## 6. Live site (after `firebase deploy --only firestore:rules`)
 
@@ -109,17 +109,18 @@ Use every file in `test-data/` and the backend fixtures, one at a time.
 
 **Date:** Nov 24, 2026. **Tester:** Tyler Petersen. **Where:** live site (`budgetly-backend-nodejs.web.app`) with two new test users; setup checks run locally.
 
-**Totals (43 numbered rows):** 37 Pass, 0 Fail, 6 not run or not fully tested. The 5 setup checks in section 0 all passed.
+**Totals (43 numbered rows):** 37 Pass, 1 Fail, 5 not run or not conclusive. The 5 setup checks in section 0 all passed.
 
-**Not run or not fully tested**
+**Not run or not conclusive**
 
 - 3.2: `checking_statement_oct_2026.pdf` was not available.
-- 4.2: the once-per-month auto budget banner was not checked.
-- 5.5: delete / export my data was not run.
+- 4.2: the once-per-month auto budget banner was not observed (see the row).
 - 6.5 and 7.1: backup and the restore runbook practice were not run.
 - 7.2: no archived data exists yet, and it is unconfirmed that the archive job (#48) and the ATM masking function change (#47) were deployed with `firebase deploy --only functions`. The ATM row in 3.3 did keep its street number, so the SCRUM-168 backend change is live.
 
-**Issues found (no High or Medium)**
+**Issues found (one Medium, the rest Low)**
+
+M1. **Medium: "Delete my data" does not delete anything.** Steps: Settings, Danger zone, Delete my data, Yes, delete everything. Expected: statements, transactions and budgets are deleted, as the page says ("Permanently delete all imported statements, transactions and budgets"). Actual: the confirm box closes and all data remains. The code (`SettingsPage.jsx`) has a TODO for a `deleteUserData` Cloud Function. Needs a fix or an explicit deferral before the freeze is lifted.
 
 1. Low (cleanup): Imported transactions still store a dollar `amount` next to `amountCents`. Steps: import a statement, open a transaction in Firestore. Expected: only `amountCents`. Cause: the TEMPORARY `amount` line in `functions/lib/transactions.js`.
 2. Low: With two accounts of the same type and "Detect from the file", the import is filed under no account without asking. Steps: add two checking accounts, import a checking CSV. Expected: ask which account, or say clearly that none was picked.
@@ -128,6 +129,7 @@ Use every file in `test-data/` and the backend fixtures, one at a time.
 5. Low: Auto budget with a large savings amount sets small categories to $0, and Apply replaces a limit the user set (Subscriptions $15 became $0) without a warning. The preview does show the change.
 6. Low (already known): "Try again" is shown for PDFs that cannot be read.
 7. Low (by design): Dashboard and budget cards round to whole dollars; the Transactions list shows cents.
+8. Low: The three Data permissions toggles in Settings (including AI categorization) are local to the page: they reset on reload and nothing reads them. Open question for Zach: is the AI model actually being called for new users, given the toggle shows on by default?
 
 ## For Jira
 
